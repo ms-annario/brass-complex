@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BRASS — Interactive Bus Route Map Editor</title>
+  <meta name="description" content="Interactive, bird's-eye-view bus route planning and map editing engine with road-constrained snapping, dual-lane road networks, incident polygons, and automated detours." />
+
+  <!-- Typography -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet" />
+
+  <!-- App Stylesheet -->
+  <link rel="stylesheet" href="css/style.css?v=138" />
+</head>
+<body>
+  <div id="app-container">
+    <!-- Main Interactive Map Canvas -->
+    <canvas id="map-canvas"></canvas>
+
+    <!-- Top Header Bar -->
+    <header id="top-header">
+      <div class="brand-section">
+        <div class="brand-logo">BRASS</div>
+        <div class="header-divider"></div>
+
+        <!-- Project Name & Action Controls (Save, Undo, Redo), next to the brand -->
+        <div class="header-project-wrapper" id="header-project-wrapper">
+          <div class="header-selected-project" id="header-selected-project" title="Active Project">
+            <span class="header-project-name" id="header-selected-project-name">Project 1</span>
+          </div>
+
+          <span class="header-review-tag">Review</span>
+          <button type="button" id="btn-draw-send" class="header-draw-send" title="Send your drawings to LTA" disabled>Update to LTA</button>
+
+          <button type="button" id="btn-header-save" class="header-save-status is-saved" title="All changes saved">
+            <span id="btn-header-save-text">Saved</span>
+          </button>
+
+          <div class="header-history-btns" hidden>
+            <button type="button" id="btn-header-undo" class="header-btn-icon" title="Undo (Cmd+Z / Ctrl+Z)" aria-label="Undo" disabled>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="1 4 1 10 7 10"></polyline>
+                <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+              </svg>
+            </button>
+            <button type="button" id="btn-header-redo" class="header-btn-icon" title="Redo (Cmd+Shift+Z / Ctrl+Y)" aria-label="Redo" disabled>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="23 4 23 10 17 10"></polyline>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Signed-in user (mock profile) -->
+      <div class="header-profile" title="John Doe">
+        <span class="header-profile-avatar" aria-hidden="true">JD</span>
+        <span class="header-profile-name">John Doe</span>
+      </div>
+    </header>
+
+    <!-- Timeline: pick a date range, then slide to see the map and projects at any moment in it -->
+    <div id="timeline-bar" class="timeline-bar">
+      <span class="timeline-title">Timeline</span>
+      <input type="date" id="tl-from" class="tl-input" aria-label="Timeline from" />
+      <span class="tl-sep">–</span>
+      <input type="date" id="tl-to" class="tl-input" aria-label="Timeline until" />
+      <div class="tl-track" title="Slide to explore how projects evolve over time.">
+        <div class="tl-rail">
+          <div id="tl-ticks" class="tl-ticks" aria-hidden="true"></div>
+          <input type="range" id="tl-slider" class="tl-slider" min="0" max="1000" step="1" value="0" disabled aria-label="Slide to explore how projects evolve over time." />
+        </div>
+        <div id="tl-scale" class="tl-scale" aria-hidden="true"></div>
+        <span id="tl-when" class="tl-when" hidden></span>
+      </div>
+      <button type="button" id="tl-close" class="tl-close" title="Reset the timeline and go back to now" aria-label="Reset timeline" hidden><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg></button>
+    </div>
+
+    <!-- Floating Stop & Route Connecting Helper Bar (Hidden) -->
+    <div id="route-connecting-bar" class="hidden" style="display: none !important;">
+      <div class="conn-pill-pulse"></div>
+      <div class="conn-text-wrap">
+        <span class="conn-label">🔗 CONNECTING BUS STOPS</span>
+        <span id="conn-status-text">From: <strong id="conn-from-name">Stn Orchard</strong> ➔ Move mouse along road to preview travel line, click to place & connect next stop</span>
+      </div>
+      <div class="conn-actions">
+        <button id="btn-conn-finish" class="btn-sm btn-conn-finish" title="Confirm line change (Press Enter)">✓ Finish Line <kbd class="kbd-enter">↵ Enter</kbd></button>
+        <button id="btn-conn-new-line" class="btn-sm btn-conn-new-line" title="Start a separate new bus line">➕ New Line</button>
+        <button id="btn-conn-cancel" class="btn-sm btn-conn-cancel" title="Cancel connection (Esc)">✕ Cancel</button>
+      </div>
+    </div>
+    <!-- Floating Route Leg Segment Action Pill (Appears when clicking a line between stops) -->
+    <div id="floating-leg-actions" class="floating-leg-pill hidden">
+      <div class="leg-pill-content">
+        <span class="leg-pill-title">Line: <strong id="floating-leg-names">Stop A ➔ Stop B</strong> <span id="floating-leg-time" class="leg-pill-time"></span></span>
+        <div class="leg-pill-btns">
+          <button id="btn-floating-connect-stop" class="btn-connect-leg-pill" title="Connect to another bus stop">Connect</button>
+          <button id="btn-floating-del-leg" class="btn-del-leg-pill" title="Delete the line between these two stops">Delete</button>
+          <button id="btn-floating-close-leg" class="btn-close-leg-pill" title="Dismiss">✕</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Floating Bus Stop Action Pill (Appears when clicking a bus stop dot) -->
+    <div id="floating-stop-actions" class="floating-leg-pill floating-stop-pill hidden">
+      <div class="leg-pill-content">
+        <span class="leg-pill-title">🚏 <strong id="floating-stop-name">Stop Name</strong> <span id="floating-stop-code" class="leg-pill-time">41009</span></span>
+        <span id="floating-stop-routes" class="floating-stop-routes">
+          <label for="floating-stop-bus" class="floating-stop-bus-label">Bus:</label>
+          <!-- Type any bus number, or open the list to pick one -->
+          <span class="bus-combo">
+            <input type="text" id="floating-stop-bus" class="bus-combo-input" placeholder="No." autocomplete="off" spellcheck="false" maxlength="10"
+              role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="floating-stop-bus-list" />
+            <button type="button" id="floating-stop-bus-toggle" class="bus-combo-toggle" tabindex="-1" aria-label="Show bus numbers">
+              <svg width="8" height="5" viewBox="0 0 8 5" aria-hidden="true"><path d="M1 1l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <ul id="floating-stop-bus-list" class="bus-combo-list hidden" role="listbox" aria-label="Bus numbers"></ul>
+          </span>
+        </span>
+        <div class="leg-pill-btns">
+          <button id="btn-floating-stop-connect" class="btn-connect-leg-pill" title="Connect this bus to another bus stop">Connect</button>
+          <button id="btn-floating-close-stop" class="btn-close-leg-pill" title="Dismiss">✕</button>
+        </div>
+      </div>
+    </div>
+
+
+
+
+    <!-- Floating Bottom-Center Toolbar Dock (FigJam/Miro Style) -->
+    <aside id="toolbar-floating">
+      <button type="button" class="tool-btn active" data-tool="select" id="tool-select" title="Move (M)">
+        <span class="tool-icon">✋</span>
+        <span class="tool-label">Move</span>
+        <span class="hotkey">M</span>
+      </button>
+
+      <div class="toolbar-divider"></div>
+
+      <!-- Each group opens its menu upwards; the button shows the tool in use -->
+      <div class="tool-group" id="tool-group-bus">
+        <button type="button" class="tool-btn tool-group-btn" data-label="Create Bus" data-icon="🚌" aria-haspopup="menu" aria-expanded="false" title="Create Bus">
+          <span class="tool-icon">🚌</span>
+          <span class="tool-label">Create Bus</span>
+          <svg class="tool-group-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>
+        </button>
+        <div class="tool-menu" role="menu" hidden>
+          <button type="button" class="tool-menu-item" role="menuitem" data-tool="stop" title="New Bus Stop (S)">
+            <span class="tool-icon">🚏</span>
+            <span class="tool-menu-label">New Bus Stop</span>
+            <span class="hotkey">S</span>
+          </button>
+          <button type="button" class="tool-menu-item" role="menuitem" data-tool="route" data-action="new-bus" title="New Bus Number">
+            <span class="tool-icon">🛣️</span>
+            <span class="tool-menu-label">New Bus Number</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="tool-group" id="tool-group-obstacle">
+        <button type="button" class="tool-btn tool-group-btn" data-label="Create Obstacle" data-icon="🚧" aria-haspopup="menu" aria-expanded="false" title="Create Obstacle">
+          <span class="tool-icon">🚧</span>
+          <span class="tool-label">Create Obstacle</span>
+          <svg class="tool-group-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>
+        </button>
+        <div class="tool-menu" role="menu" hidden>
+          <button type="button" class="tool-menu-item" role="menuitem" data-tool="area" title="Affected Area (A)">
+            <span class="tool-icon">⚠️</span>
+            <span class="tool-menu-label">Affected Area</span>
+            <span class="hotkey">A</span>
+          </button>
+          <button type="button" class="tool-menu-item" role="menuitem" data-tool="closure" title="Road Closure (C)">
+            <span class="tool-icon">🚫</span>
+            <span class="tool-menu-label">Road Closure</span>
+            <span class="hotkey">C</span>
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Right column: the inspector, then the road segment of the selected bus line right below it -->
+    <div id="right-stack" class="right-stack">
+      <!-- Share links: what the project changes from the map it started from -->
+      <aside id="changes-panel" class="changes-panel hidden" aria-label="Changes">
+        <div class="changes-head">
+          <span class="changes-title">Changes</span>
+          <span class="changes-count">0</span>
+        </div>
+        <ul class="changes-list"></ul>
+      </aside>
+      <aside id="inspector-panel" class="hidden">
+        <div class="inspector-header">
+          <span class="inspector-header-title" id="inspector-header-title">Bus Stop</span>
+          <span class="inspector-header-actions">
+            <button type="button" id="btn-edit-inspector" class="btn-edit-panel" title="Edit bus stop" aria-label="Edit bus stop" hidden><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg></button>
+            <button id="btn-close-inspector" class="btn-close-panel">✕</button>
+          </span>
+        </div>
+        <div class="inspector-body">
+          <!-- Dynamically populated by controller based on selection -->
+        </div>
+      </aside>
+
+      <aside id="segment-panel" class="segment-panel hidden" aria-label="Road segment">
+        <div class="inspector-header">
+          <span class="inspector-header-title">Road Segment</span>
+          <button type="button" id="btn-close-segment" class="btn-close-panel" aria-label="Close road segment">✕</button>
+        </div>
+        <div class="segment-body" id="segment-body"></div>
+      </aside>
+    </div>
+
+    <!-- Floating Top-Left Legend & Layer Controls (Filters) -->
+    <section id="legend-panel">
+      <!-- Section: Current Map (the live map): Applied lists what's applied, the eye shows the map -->
+      <div class="legend-section" id="section-current-map">
+        <div class="legend-section-header" id="header-current-map" role="button" tabindex="0" aria-expanded="true" title="Click to collapse/expand Current Map">
+          <span class="legend-title">Current Map</span>
+          <div class="legend-header-actions">
+            <button type="button" id="btn-current-map-history" class="btn-current-map-history" title="Live (0)" aria-label="Live (0)" aria-pressed="false">
+              <span class="activity-online-dot" aria-hidden="true"></span>
+              <span class="btn-history-text">Live (0)</span>
+            </button>
+            <button type="button" id="btn-view-current-map" class="btn-project-mode btn-project-view" title="View the Current Map" aria-label="View the Current Map" aria-pressed="false">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+            </button>
+            <span class="legend-collapse-icon" id="collapse-icon-current-map"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></span>
+          </div>
+        </div>
+
+        <div class="legend-section-body" id="body-current-map">
+          <!-- Label on the left, value on the right, like the stop and route panels -->
+          <div class="current-map-stats">
+            <div class="prop-row">
+              <span class="prop-label">Stops</span>
+              <span class="prop-val bold" id="stat-stops">--</span>
+            </div>
+            <div class="prop-row">
+              <span class="prop-label">Bus Numbers</span>
+              <span class="prop-val bold" id="stat-routes">--</span>
+            </div>
+            <div class="prop-row">
+              <span class="prop-label">Disrupted</span>
+              <span class="prop-val bold stat-disrupted" id="stat-disrupted">0</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Section: Filters (Collapsible) -->
+      <div class="legend-section" id="section-filters">
+        <div class="legend-section-header" id="header-filters" role="button" tabindex="0" aria-expanded="true" title="Click to collapse/expand Filters">
+          <span class="legend-title">Filters</span>
+          <span class="legend-collapse-icon" id="collapse-icon-filters"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></span>
+        </div>
+
+        <div class="legend-section-body" id="body-filters">
+          <!-- Filter Controls Row (Multi-Select Dropdown + Boundary Polygon Icon) -->
+          <div class="filter-field">
+            <div class="filters-input-row" id="filters-input-row">
+              <!-- Bus Number Multi-Selection Dropdown -->
+              <div class="multi-select-container" id="route-multi-select-container">
+                <button id="multi-select-trigger" class="multi-select-trigger" type="button" aria-expanded="false" title="Click to select multiple bus numbers">
+                  <div class="multi-select-summary" id="multi-select-summary">
+                    <span class="ms-summary-text">All Bus Numbers (6)</span>
+                  </div>
+                  <span class="multi-select-arrow" aria-hidden="true">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" class="multi-select-chevron">
+                      <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                  </span>
+                </button>
+
+                <div id="multi-select-dropdown" class="multi-select-menu hidden">
+                  <div class="ms-search-container">
+                    <span class="ms-search-icon">🔍</span>
+                    <input type="text" id="ms-search-input" class="ms-search-input" placeholder="Search bus number..." autocomplete="off" spellcheck="false" />
+                    <button type="button" id="ms-search-clear" class="ms-search-clear hidden" title="Clear search">✕</button>
+                  </div>
+                  <!-- Operating time window: only buses running at some point in it stay in the list and on the map -->
+                  <div class="filter-time-row ms-time-filter" id="filter-time-row">
+                    <div class="filter-field-head">
+                      <span class="filter-field-label">Operating days</span>
+                      <button type="button" id="filter-days-reset" class="filter-time-reset" hidden>Every day</button>
+                    </div>
+                    <div class="day-chips" id="filter-days" role="group" aria-label="Operating days">
+                      <button type="button" class="day-chip on" data-day="0" aria-pressed="true" title="Monday">M</button>
+                      <button type="button" class="day-chip on" data-day="1" aria-pressed="true" title="Tuesday">T</button>
+                      <button type="button" class="day-chip on" data-day="2" aria-pressed="true" title="Wednesday">W</button>
+                      <button type="button" class="day-chip on" data-day="3" aria-pressed="true" title="Thursday">T</button>
+                      <button type="button" class="day-chip on" data-day="4" aria-pressed="true" title="Friday">F</button>
+                      <button type="button" class="day-chip on" data-day="5" aria-pressed="true" title="Saturday">S</button>
+                      <button type="button" class="day-chip on" data-day="6" aria-pressed="true" title="Sunday">S</button>
+                    </div>
+                    <div class="filter-field-head filter-field-head-time">
+                      <span class="filter-field-label">Operating time</span>
+                      <button type="button" id="filter-time-reset" class="filter-time-reset" hidden>All day</button>
+                    </div>
+                    <div class="filter-time-range">
+                      <input type="time" id="filter-time-from" class="filter-time-input" value="00:00" aria-label="Operating from" />
+                      <span class="filter-time-sep">–</span>
+                      <input type="time" id="filter-time-to" class="filter-time-input" value="23:59" aria-label="Operating until" />
+                    </div>
+                  </div>
+                  <div class="ms-menu-header">
+                    <label class="ms-select-all-label">
+                      <input type="checkbox" id="ms-select-all-chk" checked />
+                      <span>Select All</span>
+                    </label>
+                    <button type="button" id="ms-clear-btn" class="ms-clear-btn">Clear All</button>
+                  </div>
+                  <div class="ms-options-list" id="ms-options-list">
+                    <!-- Dynamically populated bus numbers with checkboxes and colored dots -->
+                  </div>
+                </div>
+              </div>
+
+              <!-- Draw Area Boundary Polygon Icon Action -->
+              <button type="button" id="btn-draw-area-filter" class="btn-draw-area-icon" title="Draw boundaries on map to see buses operating in that area">
+                <svg class="icon-close" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                </svg>
+                <svg class="icon-poly" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <polygon points="12 3 20 7.5 20 16.5 12 21 4 16.5 4 7.5 12 3"></polygon>
+                  <circle cx="12" cy="3" r="1.5" fill="currentColor"></circle>
+                  <circle cx="20" cy="7.5" r="1.5" fill="currentColor"></circle>
+                  <circle cx="20" cy="16.5" r="1.5" fill="currentColor"></circle>
+                  <circle cx="12" cy="21" r="1.5" fill="currentColor"></circle>
+                  <circle cx="4" cy="16.5" r="1.5" fill="currentColor"></circle>
+                  <circle cx="4" cy="7.5" r="1.5" fill="currentColor"></circle>
+                </svg>
+              </button>
+            </div>
+
+          </div>
+
+          <!-- Quick filters: buses hit by an affected area or a road closure, and the buses on screen -->
+          <div id="quick-filter-row" class="quick-filter-row"></div>
+
+          <!-- Bus Number Buttons (Click to toggle highlight without directing away; filtered results appear here) -->
+          <div id="route-pills-row" class="route-pills-row"></div>
+        </div>
+      </div>
+
+      <!-- Section: Projects (Collapsible) -->
+      <div class="legend-section" id="section-projects">
+        <div class="legend-section-header" id="header-projects" role="button" tabindex="0" aria-expanded="true" title="Click to collapse/expand Projects">
+          <span class="legend-title">Projects</span>
+          <div class="legend-header-actions">
+            <button type="button" id="btn-create-project" class="btn-create-project" title="Create a new draft project">
+              <span class="btn-create-project-icon">+</span>
+              <span>New Project</span>
+            </button>
+            <span class="legend-collapse-icon" id="collapse-icon-projects"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></span>
+          </div>
+        </div>
+
+        <div class="legend-section-body" id="body-projects">
+          <div class="projects-container">
+            <div id="projects-list" class="projects-list">
+              <!-- Dynamically populated projects with inline rename capability -->
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Selected Bus Route Operation Details (Hidden) -->
+      <div id="route-operation-box" class="route-operation-box" style="display: none;"></div>
+
+      <!-- Section: Layers (Collapsible) -->
+      <div class="legend-section layers-toggle-container" id="section-layers">
+        <div class="legend-section-header" id="header-layers" role="button" tabindex="0" aria-expanded="true" title="Click to collapse/expand Visualization Settings">
+          <span class="legend-title">Visualization Settings</span>
+          <span class="legend-collapse-icon" id="collapse-icon-layers"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></span>
+        </div>
+
+        <div class="legend-section-body layers-body" id="body-layers">
+          <!-- Map opacity: fades the base map only, never bus stops or routes -->
+          <div class="map-opacity-row" title="Adjust map background opacity (does not affect bus stops or routes)">
+            <span class="map-opacity-label">Map Opacity</span>
+            <input type="range" id="map-opacity-slider" min="0" max="100" value="100" step="5" class="map-opacity-slider" aria-label="Map opacity" />
+            <span id="map-opacity-badge" class="map-opacity-badge">100%</span>
+          </div>
+          <label class="layer-check-label">
+            <input type="checkbox" id="layer-routes" checked /> Bus Route
+          </label>
+          <label class="layer-check-label">
+            <input type="checkbox" id="layer-stop-points" checked /> Bus Stop Point
+          </label>
+          <label class="layer-check-label">
+            <input type="checkbox" id="layer-stop-names" checked /> Bus Stop Name
+          </label>
+          <label class="layer-check-label">
+            <input type="checkbox" id="layer-mrt" checked /> MRT Stations
+          </label>
+          <label class="layer-check-label">
+            <input type="checkbox" id="layer-closures" checked /> Road Closures
+          </label>
+          <label class="layer-check-label">
+            <input type="checkbox" id="layer-areas" checked /> Affected Areas
+          </label>
+          <label class="layer-check-label">
+            <input type="checkbox" id="layer-buildings" checked /> Buildings
+          </label>
+          <label class="layer-check-label">
+            <input type="checkbox" id="layer-parks" checked /> Parks & Nature
+          </label>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- Floating Bottom-Right Map Navigation Controls -->
+    <div id="map-controls">
+      <button id="btn-zoom-in" class="ctrl-btn" title="Zoom In">+</button>
+      <button id="btn-zoom-out" class="ctrl-btn" title="Zoom Out">−</button>
+    </div>
+
+    <!-- Toast Notification Container -->
+    <!-- Name of another project's area or closure, shown where it was clicked -->
+    <div id="map-tooltip" class="map-tooltip" hidden></div>
+
+    <div id="toast-container"></div>
+
+    <!-- Confirmation Modal Pop-up for Bus Number Deletion -->
+    <div id="confirm-delete-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="confirm-delete-title">
+      <div class="modal-card">
+        <button id="btn-close-modal-x" class="modal-close-btn" type="button" aria-label="Close dialog">✕</button>
+
+        <div class="modal-header-icon danger-icon">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            <line x1="10" y1="11" x2="10" y2="17"></line>
+            <line x1="14" y1="11" x2="14" y2="17"></line>
+          </svg>
+        </div>
+
+        <div class="modal-body">
+          <h3 id="confirm-delete-title" class="modal-title">Delete Bus Number</h3>
+          <p id="confirm-delete-msg" class="modal-desc">Are you sure you want to delete this bus number? This action will remove its route path from the map.</p>
+
+          <div id="modal-route-preview" class="modal-preview-box">
+            <!-- Dynamic route preview injected by controller -->
+          </div>
+
+          <div class="modal-safety-note">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="8" x2="12" y2="12"></line>
+              <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+            <span>Connected bus stops and road network segments will remain intact.</span>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button id="btn-modal-cancel" class="modal-btn btn-modal-cancel" type="button">Cancel</button>
+          <button id="btn-modal-confirm-delete" class="modal-btn btn-modal-delete" type="button">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            </svg>
+            Delete Bus Number
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Minimal Confirmation Modal Pop-up for Project Deletion -->
+    <div id="confirm-delete-project-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modal-project-title">
+      <div class="modal-card modal-card-minimal">
+        <button id="btn-close-project-modal-x" class="modal-close-btn" type="button" aria-label="Close dialog">✕</button>
+
+        <div class="modal-minimal-content">
+          <div class="modal-minimal-text">
+            <h3 id="modal-project-title" class="modal-minimal-title">Delete Project?</h3>
+            <p id="modal-project-desc" class="modal-minimal-desc">Permanently delete <strong id="modal-project-name">Project</strong>?</p>
+            <p id="modal-project-note" class="modal-minimal-desc" hidden>What it applied stays on the Current Map.</p>
+          </div>
+        </div>
+
+        <div class="modal-actions modal-actions-minimal">
+          <button id="btn-project-modal-cancel" class="modal-btn btn-modal-cancel" type="button">Cancel</button>
+          <button id="btn-project-modal-confirm" class="modal-btn btn-modal-delete" type="button">Delete</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Minimal Confirmation Modal Pop-up for Restoring a Current Map Version -->
+    <div id="confirm-restore-version-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modal-restore-title">
+      <div class="modal-card modal-card-minimal">
+        <button id="btn-close-restore-modal-x" class="modal-close-btn" type="button" aria-label="Close dialog">✕</button>
+
+        <div class="modal-minimal-content">
+          <div class="modal-minimal-text">
+            <h3 id="modal-restore-title" class="modal-minimal-title">Restore version?</h3>
+            <p class="modal-minimal-desc">The Current Map goes back to <strong id="modal-restore-name">this version</strong>. The map as it is now stays in Permanent changes, so you can switch back.</p>
+          </div>
+        </div>
+
+        <div class="modal-actions modal-actions-minimal">
+          <button id="btn-restore-modal-cancel" class="modal-btn btn-modal-cancel" type="button">Cancel</button>
+          <button id="btn-restore-modal-confirm" class="modal-btn btn-modal-restore" type="button">Restore</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pop-up Modal: New Bus Number (number + operating hours; the colour is picked for you) -->
+    <div id="new-bus-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="new-bus-title">
+      <div class="modal-card modal-card-minimal">
+        <button id="btn-close-new-bus-x" class="modal-close-btn" type="button" aria-label="Close dialog">✕</button>
+
+        <div class="modal-minimal-content">
+          <div class="modal-minimal-text">
+            <h3 id="new-bus-title" class="modal-minimal-title">New bus number</h3>
+          </div>
+        </div>
+
+        <div class="new-bus-form">
+          <label class="new-bus-field" for="new-bus-number">
+            <span class="new-bus-label">Bus number</span>
+            <span class="new-bus-number-row">
+              <span id="new-bus-badge" class="new-bus-badge" aria-hidden="true">–</span>
+              <input type="text" id="new-bus-number" class="new-bus-input" placeholder="e.g. 35" maxlength="10" autocomplete="off" spellcheck="false" />
+            </span>
+          </label>
+          <div class="new-bus-field new-bus-active-row" id="new-bus-active-row" hidden>
+            <span class="new-bus-label">Active</span>
+            <button type="button" id="new-bus-active" class="bus-active-toggle on" role="switch" aria-checked="true">
+              <span class="bus-active-label">Active</span>
+              <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
+            </button>
+          </div>
+          <div class="new-bus-field">
+            <span class="new-bus-label">Operating hours</span>
+            <span class="new-bus-hours">
+              <input type="time" id="new-bus-start" class="new-bus-input" value="06:00" aria-label="Starts" />
+              <span class="new-bus-sep">–</span>
+              <input type="time" id="new-bus-end" class="new-bus-input" value="23:00" aria-label="Ends" />
+            </span>
+          </div>
+          <div class="new-bus-field">
+            <span class="new-bus-label">Operating days</span>
+            <span class="day-chips" id="new-bus-days" role="group" aria-label="Operating days">
+              <button type="button" class="day-chip on" data-day="0" aria-pressed="true" title="Monday">M</button>
+              <button type="button" class="day-chip on" data-day="1" aria-pressed="true" title="Tuesday">T</button>
+              <button type="button" class="day-chip on" data-day="2" aria-pressed="true" title="Wednesday">W</button>
+              <button type="button" class="day-chip on" data-day="3" aria-pressed="true" title="Thursday">T</button>
+              <button type="button" class="day-chip on" data-day="4" aria-pressed="true" title="Friday">F</button>
+              <button type="button" class="day-chip on" data-day="5" aria-pressed="true" title="Saturday">S</button>
+              <button type="button" class="day-chip on" data-day="6" aria-pressed="true" title="Sunday">S</button>
+            </span>
+          </div>
+          <label class="new-bus-field" for="new-bus-fleet">
+            <span class="new-bus-label">Number of buses</span>
+            <input type="number" id="new-bus-fleet" class="new-bus-input" min="1" max="99" step="1" value="4" />
+          </label>
+          <label class="new-bus-field" for="new-bus-model">
+            <span class="new-bus-label">Bus model</span>
+            <select id="new-bus-model" class="new-bus-input">
+              <option>Double-deck</option>
+              <option>Articulated</option>
+              <option>3-door</option>
+            </select>
+          </label>
+          <p id="new-bus-error" class="new-bus-error" hidden></p>
+        </div>
+
+        <div class="modal-actions modal-actions-minimal">
+          <button id="btn-new-bus-delete" class="new-bus-delete" type="button" title="Delete this bus number" aria-label="Delete this bus number" hidden><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path></svg></button>
+          <button id="btn-new-bus-cancel" class="modal-btn btn-modal-cancel" type="button">Cancel</button>
+          <button id="btn-new-bus-create" class="modal-btn btn-modal-confirm-apply" type="button">Create</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pop-up: confirm by typing a name (ending or removing a temporary project) -->
+    <div id="typed-confirm-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="typed-confirm-title">
+      <div class="modal-card modal-card-minimal">
+        <button id="btn-close-typed-confirm-x" class="modal-close-btn" type="button" aria-label="Close dialog">✕</button>
+
+        <div class="modal-minimal-content">
+          <div class="modal-minimal-text">
+            <h3 id="typed-confirm-title" class="modal-minimal-title">Confirm</h3>
+            <p class="modal-minimal-desc">Type <strong id="typed-confirm-word"></strong> to confirm.</p>
+          </div>
+        </div>
+
+        <div class="new-bus-form">
+          <input type="text" id="typed-confirm-input" class="new-bus-input" autocomplete="off" spellcheck="false" aria-label="Name to confirm" />
+        </div>
+
+        <div class="modal-actions modal-actions-minimal">
+          <button id="btn-typed-confirm-cancel" class="modal-btn btn-modal-cancel" type="button">Cancel</button>
+          <button id="btn-typed-confirm-ok" class="modal-btn btn-modal-delete" type="button" disabled>End</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pop-up: confirm deleting a bus from Edit bus -->
+    <div id="delete-bus-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="delete-bus-title">
+      <div class="modal-card modal-card-minimal">
+        <button id="btn-close-delete-bus-x" class="modal-close-btn" type="button" aria-label="Close dialog">✕</button>
+
+        <div class="modal-minimal-content">
+          <div class="modal-minimal-text">
+            <h3 id="delete-bus-title" class="modal-minimal-title">Delete bus?</h3>
+            <p class="modal-minimal-desc">Type <strong id="delete-bus-name">Bus</strong> to confirm.</p>
+          </div>
+        </div>
+
+        <div class="new-bus-form">
+          <input type="text" id="delete-bus-confirm-input" class="new-bus-input" autocomplete="off" spellcheck="false" aria-label="Bus number" />
+        </div>
+
+        <div class="modal-actions modal-actions-minimal">
+          <button id="btn-delete-bus-cancel" class="modal-btn btn-modal-cancel" type="button">Cancel</button>
+          <button id="btn-delete-bus-confirm" class="modal-btn btn-modal-delete" type="button" disabled>Delete</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pop-up: edit a bus stop (its name, or delete it) -->
+    <div id="edit-stop-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="edit-stop-title">
+      <div class="modal-card modal-card-minimal">
+        <button id="btn-close-edit-stop-x" class="modal-close-btn" type="button" aria-label="Close dialog">✕</button>
+
+        <div class="modal-minimal-content">
+          <div class="modal-minimal-text">
+            <h3 id="edit-stop-title" class="modal-minimal-title">Edit bus stop</h3>
+          </div>
+        </div>
+
+        <div class="new-bus-form">
+          <label class="new-bus-field" for="edit-stop-name">
+            <span class="new-bus-label">Name</span>
+            <input type="text" id="edit-stop-name" class="new-bus-input" maxlength="60" autocomplete="off" spellcheck="false" />
+          </label>
+          <div class="new-bus-field new-bus-active-row">
+            <span class="new-bus-label">Active</span>
+            <button type="button" id="edit-stop-active" class="bus-active-toggle on" role="switch" aria-checked="true">
+              <span class="bus-active-label">Active</span>
+              <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
+            </button>
+          </div>
+          <div class="new-bus-field">
+            <span class="new-bus-label">Bus types</span>
+            <span class="day-chips" id="edit-stop-types" role="group" aria-label="Bus types this stop takes">
+              <button type="button" class="day-chip on" data-type="Double-deck" aria-pressed="true">Double-deck</button>
+              <button type="button" class="day-chip on" data-type="Articulated" aria-pressed="true">Articulated</button>
+              <button type="button" class="day-chip on" data-type="3-door" aria-pressed="true">3-door</button>
+            </span>
+          </div>
+          <p id="edit-stop-error" class="new-bus-error" hidden></p>
+        </div>
+
+        <div class="modal-actions modal-actions-minimal">
+          <button id="btn-edit-stop-delete" class="new-bus-delete" type="button" title="Delete this bus stop" aria-label="Delete this bus stop"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path></svg></button>
+          <button id="btn-edit-stop-cancel" class="modal-btn btn-modal-cancel" type="button">Cancel</button>
+          <button id="btn-edit-stop-save" class="modal-btn btn-modal-confirm-apply" type="button">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pop-up: delete a bus stop; its name has to be typed to confirm -->
+    <div id="delete-stop-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="delete-stop-title">
+      <div class="modal-card modal-card-minimal">
+        <button id="btn-close-delete-stop-x" class="modal-close-btn" type="button" aria-label="Close dialog">✕</button>
+
+        <div class="modal-minimal-content">
+          <div class="modal-minimal-text">
+            <h3 id="delete-stop-title" class="modal-minimal-title">Delete bus stop?</h3>
+            <p class="modal-minimal-desc">Type <strong id="delete-stop-name">Stop</strong> to confirm.</p>
+          </div>
+        </div>
+
+        <div class="new-bus-form">
+          <input type="text" id="delete-stop-confirm" class="new-bus-input" autocomplete="off" spellcheck="false" aria-label="Bus stop name" />
+        </div>
+
+        <div class="modal-actions modal-actions-minimal">
+          <button id="btn-delete-stop-cancel" class="modal-btn btn-modal-cancel" type="button">Cancel</button>
+          <button id="btn-delete-stop-confirm" class="modal-btn btn-modal-delete" type="button" disabled>Delete</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pop-up Modal: Link Bus Line & Record Bus Number -->
+    <div id="link-line-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="link-line-modal-title">
+      <div class="modal-card modal-card-link-line">
+        <button id="btn-close-link-line-modal" class="modal-close-btn" type="button" aria-label="Close dialog">✕</button>
+
+        <div class="modal-link-header">
+          <div class="modal-header-icon link-line-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+            </svg>
+          </div>
+          <div>
+            <h3 id="link-line-modal-title" class="modal-title">Link Bus Line</h3>
+            <p class="modal-desc">Connect stops and record bus service number</p>
+          </div>
+        </div>
+
+        <div class="modal-link-stops-box">
+          <div class="link-stop-col">
+            <span class="link-stop-badge origin">FROM</span>
+            <div class="link-stop-details">
+              <span id="link-line-from-name" class="link-stop-name">Origin Stop</span>
+              <span id="link-line-from-code" class="link-stop-code">Code: —</span>
+            </div>
+          </div>
+          <div class="link-stops-arrow">➔</div>
+          <div class="link-stop-col">
+            <span class="link-stop-badge dest">TO</span>
+            <div class="link-stop-details">
+              <span id="link-line-to-name" class="link-stop-name">Destination Stop</span>
+              <span id="link-line-to-code" class="link-stop-code">Code: —</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-link-input-section">
+          <label for="link-line-bus-number" class="modal-input-label">Bus Number</label>
+          <div class="modal-bus-input-row">
+            <div class="modal-bus-badge-preview" id="modal-bus-badge-preview">Bus 35</div>
+            <input type="text" id="link-line-bus-number" class="modal-bus-input" placeholder="e.g. 35, 12, 190" autocomplete="off" spellcheck="false" maxlength="10" />
+          </div>
+          <span class="modal-hint-text">One bus stop can serve multiple bus numbers without combining. They will pass through together.</span>
+        </div>
+
+        <div class="modal-actions">
+          <button id="btn-link-line-cancel" class="modal-btn btn-modal-cancel" type="button">Cancel</button>
+          <button id="btn-link-line-confirm" class="modal-btn btn-modal-confirm-link" type="button">Link Line</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Minimal Confirmation Modal Pop-up for Applying a Project to Current Map -->
+    <div id="confirm-apply-project-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="apply-modal-title">
+      <div class="modal-card modal-card-minimal">
+        <button id="btn-close-apply-modal-x" class="modal-close-btn" type="button" aria-label="Close dialog">✕</button>
+
+        <div class="modal-minimal-content">
+          <div class="modal-minimal-text">
+            <h3 id="apply-modal-title" class="modal-minimal-title">Apply project?</h3>
+            <p id="apply-modal-desc" class="modal-minimal-desc">Permanent</p>
+            <ul id="apply-modal-changes" class="apply-change-list" hidden></ul>
+          </div>
+        </div>
+
+        <div class="modal-actions modal-actions-minimal">
+          <button id="btn-apply-modal-cancel" class="modal-btn btn-modal-cancel" type="button">Cancel</button>
+          <button id="btn-apply-modal-confirm" class="modal-btn btn-modal-confirm-apply" type="button">Apply</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Application Scripts in dependency order -->
+  <script src="js/util.js?v=158"></script>
+  <script src="js/storage.js?v=3"></script>
+  <script src="js/citygen.js?v=128"></script>
+  <script src="js/network.js?v=129"></script>
+  <script src="js/sampledata.js?v=130"></script>
+  <script src="js/mrt.js?v=141"></script>
+  <script src="js/store.js?v=183"></script>
+  <script src="js/renderer.js?v=195"></script>
+  <script src="js/controller.js?v=211"></script>
+  <script src="js/report.js?v=158"></script>
+  <script src="js/app.js?v=141"></script>
+</body>
+</html>
